@@ -1,0 +1,69 @@
+[package]
+name = "dictate-in"
+version = "0.1.0"
+edition = "2024"
+build = "build.rs"
+
+[features]
+default = []
+# ONNX Runtime GPU backends
+ort-cuda = ["ort/cuda"]
+ort-directml = ["ort/directml"]
+ort-coreml = ["ort/coreml"]
+ort-rocm = ["ort/rocm"]
+# llama.cpp GPU backends
+llama-vulkan = ["llama-cpp-sys-2/vulkan"]
+llama-cuda = ["llama-cpp-sys-2/cuda"]
+llama-rocm = ["llama-cpp-sys-2/rocm"]
+# Composite GPU profiles
+gpu-vulkan = ["llama-vulkan"]
+gpu-cuda = ["ort-cuda", "llama-cuda"]
+gpu-directml = ["ort-directml", "llama-vulkan"]
+gpu-rocm = ["ort-rocm", "llama-rocm"]
+gpu-metal = ["ort-coreml"]
+
+[dependencies]
+anyhow = "1.0"
+arboard = "3.6"
+base64 = "0.22"
+cpal = "0.16"
+crossbeam-channel = "0.5"
+half = "2.7"
+hound = "3.5"
+llama-cpp-sys-2 = { version = "0.1.151", default-features = false }
+ndarray = "0.16"
+ort = { version = "2.0.0-rc.12", features = ["half"] }
+rustfft = "6.4"
+rubato = "0.16"
+sentencepiece-rs = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+sha2 = "0.10"
+slint = "1.12"
+thiserror = "2.0"
+toml = "0.9"
+tray-icon = "0.21"
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[build-dependencies]
+slint-build = "1.12"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Direct2D",
+    "Win32_Graphics_Direct2D_Common",
+    "Win32_Graphics_DirectWrite",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_Imaging",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }

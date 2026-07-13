@@ -1,0 +1,13 @@
+/target
+/dist
+/models
+/.memory
+
+# User-specific config (generated at runtime)
+/config/settings.toml
+/logs
+/cache
+
+# OS files
+Thumbs.db
+.DS_Store

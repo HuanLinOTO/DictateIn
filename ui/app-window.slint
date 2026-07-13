@@ -1,0 +1,671 @@
+import {
+    Button,
+    CheckBox,
+    ComboBox,
+    ScrollView,
+    TextEdit,
+} from "std-widgets.slint";
+
+component CompactButton inherits Button {
+    height: 32px;
+    vertical-stretch: 0;
+}
+
+component CompactComboBox inherits ComboBox {
+    height: 32px;
+    vertical-stretch: 0;
+}
+
+component NavigationItem inherits Rectangle {
+    in property <string> label;
+    in property <bool> active: false;
+    callback activated();
+    height: 38px;
+    border-radius: 6px;
+    background: active ? #ffffff : touch-area.has-hover ? #dfe8ec : transparent;
+
+    Text {
+        x: 12px;
+        text: root.label;
+        color: active ? #167d92 : #344650;
+        font-size: 13px;
+        font-weight: active ? 700 : 400;
+        vertical-alignment: center;
+    }
+
+    touch-area := TouchArea {
+        clicked => {
+            root.activated();
+        }
+    }
+}
+
+component Panel inherits Rectangle {
+    in property <string> title;
+    border-width: 1px;
+    border-color: #d7e0e5;
+    border-radius: 8px;
+    background: #ffffff;
+    vertical-stretch: 0;
+
+    VerticalLayout {
+        padding: 20px;
+        spacing: 14px;
+
+        Text {
+            text: root.title;
+            color: #60717d;
+            font-size: 11px;
+            font-weight: 700;
+            vertical-stretch: 0;
+        }
+
+        @children
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "DictateIn - 本地语音输入";
+    width: 960px;
+    height: 680px;
+    background: #f3f6f8;
+
+    in-out property <string> status-text: "正在启动";
+    in-out property <string> model-name: "SenseVoice-Small";
+    in-out property <int> model-index: 0;
+    in-out property <string> model-capability-text: "SenseVoice CTC Top-K 热词增强";
+    in-out property <string> hotkey-text: "Ctrl + Space";
+    in-out property <string> hotwords-text: "DictateIn";
+    in-out property <int> output-mode-index: 0;
+    in-out property <bool> suppress-hotkey: false;
+    in-out property <float> input-level: 0;
+    in-out property <int> active-page: 0;
+    in-out property <bool> capturing-hotkey: false;
+    in-out property <int> model-test-state: 0;
+    in-out property <string> model-test-result: "尚未进行模型测试";
+    in property <[string]> microphone-devices: [];
+    in-out property <int> microphone-index: 0;
+    callback run-demo();
+    callback switch-model(int);
+    callback select-microphone(int);
+    callback open-models-directory();
+    callback open-logs-directory();
+    callback copy-diagnostics();
+    callback capture-hotkey();
+    callback cancel-hotkey-capture();
+    callback toggle-model-test();
+    callback save-settings(string, string, int, bool);
+
+    VerticalLayout {
+        spacing: 0px;
+
+        Rectangle {
+            height: 96px;
+            background: #162129;
+
+            VerticalLayout {
+                padding-left: 28px;
+                padding-right: 28px;
+                padding-top: 18px;
+                padding-bottom: 16px;
+                spacing: 4px;
+
+                HorizontalLayout {
+                    Text {
+                        text: "DICTATE IN";
+                        color: #ffffff;
+                        font-size: 22px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        background: transparent;
+                    }
+
+                    Rectangle {
+                        width: 112px;
+                        height: 30px;
+                        border-radius: 6px;
+                        background: #167d92;
+
+                        Text {
+                            text: root.status-text;
+                            color: #ffffff;
+                            font-size: 12px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                }
+
+                Text {
+                    text: "按住说话，松开上屏，全程本地运行";
+                    color: #a9bac4;
+                    font-size: 13px;
+                }
+            }
+        }
+
+        Rectangle {
+            height: 5px;
+            background: #167d92;
+
+            Rectangle {
+                x: 32px;
+                width: 180px;
+                height: 5px;
+                background: #e56b3f;
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 0px;
+
+            Rectangle {
+                width: 208px;
+                background: #e9eff2;
+                border-width: 1px;
+                border-color: #d7e0e5;
+
+                VerticalLayout {
+                    padding: 20px;
+                    spacing: 8px;
+
+                    Text {
+                        text: "设置";
+                        color: #60717d;
+                        font-size: 11px;
+                        font-weight: 700;
+                    }
+
+                    NavigationItem {
+                        label: "模型";
+                        active: root.active-page == 0;
+                        activated => {
+                            root.active-page = 0;
+                        }
+                    }
+
+                    NavigationItem {
+                        label: "输入";
+                        active: root.active-page == 1;
+                        activated => {
+                            root.active-page = 1;
+                        }
+                    }
+
+                    NavigationItem {
+                        label: "热词";
+                        active: root.active-page == 2;
+                        activated => {
+                            root.active-page = 2;
+                        }
+                    }
+
+                    NavigationItem {
+                        label: "外观";
+                        active: root.active-page == 3;
+                        activated => {
+                            root.active-page = 3;
+                        }
+                    }
+
+                    NavigationItem {
+                        label: "诊断";
+                        active: root.active-page == 4;
+                        activated => {
+                            root.active-page = 4;
+                        }
+                    }
+
+                    Rectangle {
+                        vertical-stretch: 1;
+                        background: transparent;
+                    }
+
+                    Text {
+                        text: "完全本地运行 · 不开放网络端口";
+                        color: #60717d;
+                        font-size: 10px;
+                        wrap: word-wrap;
+                    }
+
+                }
+            }
+
+            if root.active-page == 0 : ScrollView {
+                horizontal-stretch: 1;
+
+                VerticalLayout {
+                    padding: 32px;
+                    spacing: 22px;
+
+                    Text {
+                        text: "语音模型";
+                        color: #162129;
+                        font-size: 28px;
+                        font-weight: 700;
+                        vertical-stretch: 0;
+                    }
+
+                    Text {
+                        text: "同一时间只加载一个本地模型，语音识别在后台完全离线运行。";
+                        color: #60717d;
+                        font-size: 13px;
+                        wrap: word-wrap;
+                        vertical-stretch: 0;
+                    }
+
+                    Panel {
+                        title: "当前模型";
+
+                        VerticalLayout {
+                            spacing: 12px;
+
+                            Text {
+                                text: root.model-name;
+                                color: #162129;
+                                font-size: 20px;
+                                font-weight: 700;
+                            }
+
+                            Text {
+                                text: root.model-capability-text;
+                                color: #60717d;
+                                font-size: 12px;
+                                wrap: word-wrap;
+                            }
+
+                            model-selector := CompactComboBox {
+                                model: [
+                                    "SenseVoice-Small",
+                                    "Fun-ASR-Nano",
+                                    "Qwen3-ASR",
+                                ];
+                                current-index <=> root.model-index;
+                                selected(value) => {
+                                    root.switch-model(model-selector.current-index);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if root.active-page == 1 : ScrollView {
+                horizontal-stretch: 1;
+
+                VerticalLayout {
+                    padding: 32px;
+                    spacing: 22px;
+
+                    Text {
+                        text: "输入设置";
+                        color: #162129;
+                        font-size: 28px;
+                        font-weight: 700;
+                        vertical-stretch: 0;
+                    }
+
+                    Text {
+                        text: "选择录音麦克风，并录制按住说话所使用的快捷键组合。";
+                        color: #60717d;
+                        font-size: 13px;
+                        wrap: word-wrap;
+                        vertical-stretch: 0;
+                    }
+
+                    Panel {
+                        title: "按住说话";
+
+                        VerticalLayout {
+                            spacing: 12px;
+
+                            HorizontalLayout {
+                                spacing: 16px;
+
+                                Rectangle {
+                                    horizontal-stretch: 1;
+                                    height: 34px;
+                                    border-width: 1px;
+                                    border-color: root.capturing-hotkey ? #167d92 : #c4d0d6;
+                                    border-radius: 5px;
+                                    background: root.capturing-hotkey ? #e7f4f6 : #f8fafb;
+
+                                    Text {
+                                        x: 10px;
+                                        text: root.capturing-hotkey
+                                            ? "等待按键..."
+                                            : root.hotkey-text;
+                                        color: #162129;
+                                        font-size: 13px;
+                                        vertical-alignment: center;
+                                    }
+                                }
+
+                                CompactButton {
+                                    text: root.capturing-hotkey ? "捕获中" : "录制快捷键";
+                                    enabled: !root.capturing-hotkey;
+                                    clicked => {
+                                        root.capture-hotkey();
+                                        hotkey-capture-focus.focus();
+                                    }
+                                }
+
+                                CheckBox {
+                                    text: "屏蔽原快捷键（当前模式暂不支持）";
+                                    checked: false;
+                                    enabled: false;
+                                }
+                            }
+
+                            Rectangle {
+                                height: 8px;
+                                border-radius: 4px;
+                                background: #e9eff2;
+
+                                Rectangle {
+                                    width: parent.width * root.input-level;
+                                    height: parent.height;
+                                    border-radius: 4px;
+                                    background: root.input-level > 0.75
+                                        ? #e56b3f
+                                        : #167d92;
+                                }
+                            }
+
+                            microphone-selector := CompactComboBox {
+                                model: root.microphone-devices;
+                                current-index <=> root.microphone-index;
+                                selected(value) => {
+                                    root.select-microphone(
+                                        microphone-selector.current-index,
+                                    );
+                                }
+                            }
+
+                            HorizontalLayout {
+                                Rectangle {
+                                    horizontal-stretch: 1;
+                                    background: transparent;
+                                }
+
+                                CompactButton {
+                                    text: "保存输入设置";
+                                    clicked => {
+                                        root.save-settings(
+                                            root.hotkey-text,
+                                            root.hotwords-text,
+                                            root.output-mode-index,
+                                            root.suppress-hotkey,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if root.active-page == 2 : ScrollView {
+                horizontal-stretch: 1;
+
+                VerticalLayout {
+                    padding: 32px;
+                    spacing: 22px;
+
+                    Text {
+                        text: "热词设置";
+                        color: #162129;
+                        font-size: 28px;
+                        font-weight: 700;
+                        vertical-stretch: 0;
+                    }
+
+                    Text {
+                        text: "每行输入一个热词。当前模型会按照“模型”页面显示的能力应用这些词语。";
+                        color: #60717d;
+                        font-size: 13px;
+                        wrap: word-wrap;
+                        vertical-stretch: 0;
+                    }
+
+                    Panel {
+                        title: "热词与输出方式";
+
+                        VerticalLayout {
+                            spacing: 12px;
+
+                            TextEdit {
+                                text <=> root.hotwords-text;
+                                height: 180px;
+                                vertical-stretch: 0;
+                            }
+
+                            HorizontalLayout {
+                                spacing: 16px;
+
+                                output-selector := CompactComboBox {
+                                    model: [
+                                        "Unicode 直接输入",
+                                        "剪贴板粘贴",
+                                        "仅复制到剪贴板",
+                                    ];
+                                    current-index <=> root.output-mode-index;
+                                }
+
+                                Rectangle {
+                                    horizontal-stretch: 1;
+                                    background: transparent;
+                                }
+
+                                CompactButton {
+                                    text: "保存热词设置";
+                                    clicked => {
+                                        root.save-settings(
+                                            root.hotkey-text,
+                                            root.hotwords-text,
+                                            output-selector.current-index,
+                                            root.suppress-hotkey,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if root.active-page == 3 : ScrollView {
+                horizontal-stretch: 1;
+
+                VerticalLayout {
+                    padding: 32px;
+                    spacing: 22px;
+
+                    Text {
+                        text: "外观";
+                        color: #162129;
+                        font-size: 28px;
+                        font-weight: 700;
+                        vertical-stretch: 0;
+                    }
+
+                    Text {
+                        text: "原生状态浮层会跟随当前前台显示器，并且不会抢占键盘焦点。";
+                        color: #60717d;
+                        font-size: 13px;
+                        wrap: word-wrap;
+                        vertical-stretch: 0;
+                    }
+
+                    Panel {
+                        title: "浮层行为";
+
+                        VerticalLayout {
+                            spacing: 12px;
+
+                            Text {
+                                text: "始终置顶 · 不激活窗口 · 不显示在任务栏和 Alt+Tab";
+                                color: #162129;
+                                font-size: 14px;
+                                wrap: word-wrap;
+                            }
+
+                            Text {
+                                text: "浮层会显示聆听、识别和上屏状态，并自动启用逐显示器 DPI 适配。";
+                                color: #60717d;
+                                font-size: 12px;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if root.active-page == 4 : ScrollView {
+                horizontal-stretch: 1;
+
+                VerticalLayout {
+                    padding: 32px;
+                    spacing: 22px;
+
+                    Text {
+                        text: "诊断";
+                        color: #162129;
+                        font-size: 28px;
+                        font-weight: 700;
+                        vertical-stretch: 0;
+                    }
+
+                    Text {
+                        text: "查看当前运行状态、测试模型，或打开便携数据目录。";
+                        color: #60717d;
+                        font-size: 13px;
+                        wrap: word-wrap;
+                        vertical-stretch: 0;
+                    }
+
+                    Panel {
+                        title: "运行状态";
+
+                        VerticalLayout {
+                            spacing: 12px;
+
+                            Text {
+                                text: "状态：" + root.status-text;
+                                color: #162129;
+                                font-size: 14px;
+                            }
+
+                            Text {
+                                text: "当前模型：" + root.model-name;
+                                color: #60717d;
+                                font-size: 12px;
+                            }
+
+                            HorizontalLayout {
+                                spacing: 12px;
+
+                                CompactButton {
+                                    text: "打开模型目录";
+                                    clicked => {
+                                        root.open-models-directory();
+                                    }
+                                }
+
+                                CompactButton {
+                                    text: "打开日志目录";
+                                    clicked => {
+                                        root.open-logs-directory();
+                                    }
+                                }
+
+                                CompactButton {
+                                    text: "复制诊断摘要";
+                                    clicked => {
+                                        root.copy-diagnostics();
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Panel {
+                        title: "模型录音测试";
+
+                        VerticalLayout {
+                            spacing: 12px;
+
+                            Text {
+                                text: "使用当前麦克风和当前模型执行一次真实识别，结果只显示在这里，不会向其他窗口输入。";
+                                color: #60717d;
+                                font-size: 12px;
+                                wrap: word-wrap;
+                            }
+
+                            CompactButton {
+                                text: root.model-test-state == 1
+                                    ? "停止录音并识别"
+                                    : root.model-test-state == 2
+                                        ? "正在识别..."
+                                        : "开始录音测试";
+                                enabled: root.model-test-state != 2;
+                                clicked => {
+                                    root.toggle-model-test();
+                                }
+                            }
+
+                            Rectangle {
+                                min-height: 100px;
+                                border-width: 1px;
+                                border-color: #d7e0e5;
+                                border-radius: 6px;
+                                background: #f8fafb;
+
+                                Text {
+                                    x: 12px;
+                                    y: 10px;
+                                    width: parent.width - 24px;
+                                    height: parent.height - 20px;
+                                    text: root.model-test-result;
+                                    color: #344650;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    hotkey-capture-focus := FocusScope {
+        enabled: root.capturing-hotkey;
+        focus-on-click: false;
+        focus-on-tab-navigation: false;
+
+        key-pressed(event) => {
+            if (!root.capturing-hotkey) {
+                reject
+            } else if (event.text == Key.Escape) {
+                root.cancel-hotkey-capture();
+                accept
+            } else {
+                accept
+            }
+        }
+
+        key-released(event) => {
+            if (root.capturing-hotkey) {
+                accept
+            } else {
+                reject
+            }
+        }
+    }
+}

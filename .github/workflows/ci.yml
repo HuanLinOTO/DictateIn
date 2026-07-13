@@ -1,0 +1,241 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_LOG: info
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────
+  # Lint & test (fast, runs first as a gate)
+  # ─────────────────────────────────────────────────────────────────────
+  check:
+    name: Lint & Test
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Linux audio deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev pkg-config
+      - name: Check
+        run: cargo check --locked
+      - name: Test
+        run: cargo test --locked
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Build matrix — 3 platforms × GPU backends
+  # ─────────────────────────────────────────────────────────────────────
+  build:
+    name: Build ${{ matrix.name }}
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ── Windows ──
+          - name: windows-x64-cpu
+            os: windows-2022
+            target: x86_64-pc-windows-msvc
+            features: ""
+            archive: zip
+          - name: windows-x64-vulkan
+            os: windows-2022
+            target: x86_64-pc-windows-msvc
+            features: "gpu-vulkan"
+            archive: zip
+          - name: windows-x64-cuda
+            os: windows-2022
+            target: x86_64-pc-windows-msvc
+            features: "gpu-cuda"
+            archive: zip
+
+          # ── macOS ──
+          - name: macos-arm64-cpu
+            os: macos-14
+            target: aarch64-apple-darwin
+            features: ""
+            archive: tar.gz
+          - name: macos-arm64-metal
+            os: macos-14
+            target: aarch64-apple-darwin
+            features: "gpu-metal"
+            archive: tar.gz
+          - name: macos-x86_64-cpu
+            os: macos-13
+            target: x86_64-apple-darwin
+            features: ""
+            archive: tar.gz
+
+          # ── Linux ──
+          - name: linux-x64-cpu
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            features: ""
+            archive: tar.gz
+          - name: linux-x64-vulkan
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            features: "gpu-vulkan"
+            archive: tar.gz
+          - name: linux-x64-cuda
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            features: "gpu-cuda"
+            archive: tar.gz
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.name }}
+
+      # ── Platform-specific native deps ──
+      - name: Install Linux deps (audio + Vulkan)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev pkg-config
+          # Vulkan SDK for llama.cpp Vulkan backend
+          if [[ "${{ matrix.features }}" == *"vulkan"* ]]; then
+            sudo apt-get install -y libvulkan-dev libvulkan1 vulkan-tools
+          fi
+
+      - name: Install CUDA Toolkit (Linux)
+        if: runner.os == 'Linux' && contains(matrix.features, 'cuda')
+        run: |
+          sudo apt-get install -y nvidia-cuda-toolkit
+
+      - name: Install CUDA Toolkit (Windows)
+        if: runner.os == 'Windows' && contains(matrix.features, 'cuda')
+        uses: Jimver/cuda-toolkit@v0.2.21
+        with:
+          cuda: '12.4.1'
+          method: 'network'
+
+      - name: Install Vulkan SDK (Windows)
+        if: runner.os == 'Windows' && contains(matrix.features, 'vulkan')
+        run: |
+          $vulkanInstaller = "$env:TEMP\vulkan-installer.exe"
+          Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe" -OutFile $vulkanInstaller
+          Start-Process -FilePath $vulkanInstaller -ArgumentList "--accept-licenses --default --silent" -Wait
+          echo "VULKAN_SDK=C:\VulkanSDK" >> $env:GITHUB_ENV
+
+      - name: Install Linux CUDA libs for ort (Linux)
+        if: runner.os == 'Linux' && contains(matrix.features, 'cuda')
+        run: |
+          echo "ORT_LIB_CUDA=/usr/local/cuda/lib64" >> $GITHUB_ENV
+
+      # ── Build ──
+      - name: Build
+        shell: bash
+        run: |
+          FEATURES_ARG=""
+          if [ -n "${{ matrix.features }}" ]; then
+            FEATURES_ARG="--features ${{ matrix.features }}"
+          fi
+          cargo build --release --locked --target ${{ matrix.target }} $FEATURES_ARG
+
+      # ── Package ──
+      - name: Package
+        shell: bash
+        run: |
+          STAGING="staging/dictate-in-${{ matrix.name }}"
+          mkdir -p "$STAGING"/{config,models,logs,cache}
+
+          # Binary
+          BIN_NAME="dictate-in"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            BIN_NAME="dictate-in.exe"
+          fi
+          cp "target/${{ matrix.target }}/release/$BIN_NAME" "$STAGING/"
+
+          # Shared libraries (DLLs / dylibs / .so)
+          case "${{ runner.os }}" in
+            Windows)
+              cp target/${{ matrix.target }}/release/*.dll "$STAGING/" 2>/dev/null || true
+              ;;
+            macOS)
+              cp target/${{ matrix.target }}/release/*.dylib "$STAGING/" 2>/dev/null || true
+              ;;
+            Linux)
+              cp target/${{ matrix.target }}/release/*.so "$STAGING/" 2>/dev/null || true
+              # Vulkan/CUDA runtime libs
+              if [[ "${{ matrix.features }}" == *"vulkan"* ]]; then
+                cp /usr/lib/x86_64-linux-gnu/libvulkan.so* "$STAGING/" 2>/dev/null || true
+              fi
+              ;;
+          esac
+
+          # README
+          cat > "$STAGING/README.txt" << 'README_EOF'
+          DictateIn — 本地语音输入
+          ============================
+          完全本地运行，不开放网络端口。
+
+          用法：
+            1. 将模型文件放入 models/ 目录（见下方说明）
+            2. 运行 dictate-in.exe（或对应平台的二进制）
+            3. 按住快捷键说话，松开上屏
+
+          模型下载：https://github.com/HaujetZhao/CapsWriter-Offline/releases/tag/models
+          README_EOF
+
+          # Archive
+          cd staging
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            7z a -tzip "../dictate-in-${{ matrix.name }}.zip" dictate-in-${{ matrix.name }}
+          else
+            tar czf "../dictate-in-${{ matrix.name }}.tar.gz" dictate-in-${{ matrix.name }}
+          fi
+          cd ..
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dictate-in-${{ matrix.name }}
+          path: dictate-in-${{ matrix.name }}.${{ matrix.archive }}
+          retention-days: 30
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Release — upload archives to GitHub Releases on tag push
+  # ─────────────────────────────────────────────────────────────────────
+  release:
+    name: Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: false
+
+      - name: Flatten artifacts
+        run: |
+          mkdir -p release
+          find artifacts -type f \( -name "*.zip" -o -name "*.tar.gz" \) -exec cp {} release/ \;
+          ls -la release/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: release/*
