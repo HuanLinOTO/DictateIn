@@ -35,7 +35,8 @@ jobs:
             libpango1.0-dev \
             libcairo2-dev \
             libgdk-pixbuf2.0-dev \
-            libxdo-dev      - name: Check
+            libxdo-dev
+      - name: Check
         run: cargo check --locked
       - name: Test
         run: cargo test --locked
