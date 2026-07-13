@@ -232,18 +232,21 @@ jobs:
           cmake --install "$env:TEMP\SPIRV-Headers\build"
 
           # 3. glslc (shader compiler from Google shaderc continuous build)
-          # The download URL changes with each build; we get the latest URL from the badge page.
+          # The badge page points to install.tgz but actual file is install.zip (~225MB from GCS).
           $badgePage = curl.exe -L -s "https://storage.googleapis.com/shaderc/badges/build_link_windows_vs2022_amd64_release.html"
           $glslcUrl = [regex]::Match($badgePage, 'url=([^"]+)').Groups[1].Value
           if (-not $glslcUrl) { throw "Failed to find shaderc download URL from badge page" }
+          # Fix: badge page says .tgz but actual file is .zip
+          $glslcUrl = $glslcUrl -replace '\.tgz$', '.zip'
           Write-Output "Downloading glslc from: $glslcUrl"
-          $glslcTgz = "$env:TEMP\glslc.tgz"
-          curl.exe -L --retry 3 --connect-timeout 15 --max-time 300 -o $glslcTgz $glslcUrl
-          if (-not (Test-Path $glslcTgz)) { throw "glslc download failed" }
-          $glslcSize = (Get-Item $glslcTgz).Length
-          if ($glslcSize -lt 100KB) { throw "glslc download too small: $glslcSize bytes" }
-          # Extract .tgz (Windows has built-in tar)
-          tar xzf $glslcTgz -C "$env:TEMP\shaderc"
+          $glslcZip = "$env:TEMP\shaderc-install.zip"
+          curl.exe -L --retry 3 --connect-timeout 15 --max-time 600 -o $glslcZip $glslcUrl
+          if (-not (Test-Path $glslcZip)) { throw "glslc download failed" }
+          $glslcSize = (Get-Item $glslcZip).Length
+          if ($glslcSize -lt 1MB) { throw "glslc download too small: $glslcSize bytes" }
+          Write-Output "Downloaded shaderc: $([math]::Round($glslcSize / 1MB)) MB"
+          # Extract and find glslc.exe
+          Expand-Archive -Path $glslcZip -DestinationPath "$env:TEMP\shaderc" -Force
           $glslc = Get-ChildItem -Path "$env:TEMP\shaderc" -Recurse -Filter "glslc.exe" | Select-Object -First 1
           if ($glslc) {
             Copy-Item -Path $glslc.FullName -Destination "$sdkDir\Bin\glslc.exe"
