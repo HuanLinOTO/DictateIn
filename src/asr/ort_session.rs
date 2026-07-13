@@ -3,6 +3,15 @@ use ort::session::{Session, builder::GraphOptimizationLevel};
 use std::path::Path;
 
 pub struct OrtSessionConfig {
+    #[cfg_attr(
+        not(any(
+            feature = "ort-cuda",
+            feature = "ort-directml",
+            feature = "ort-coreml",
+            feature = "ort-rocm"
+        )),
+        allow(dead_code)
+    )]
     pub use_gpu: bool,
 }
 
@@ -16,6 +25,15 @@ fn ort_err(e: impl std::fmt::Display) -> anyhow::Error {
     anyhow::anyhow!("ONNX Runtime error: {e}")
 }
 
+#[cfg_attr(
+    not(any(
+        feature = "ort-cuda",
+        feature = "ort-directml",
+        feature = "ort-coreml",
+        feature = "ort-rocm"
+    )),
+    allow(unused_variables)
+)]
 pub fn create_session(path: &Path, config: &OrtSessionConfig) -> Result<Session> {
     let builder = Session::builder()
         .map_err(ort_err)?
