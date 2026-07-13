@@ -131,15 +131,22 @@ jobs:
         run: |
           # cmake crate (0.1.58) reads CMAKE_TOOLCHAIN_FILE env var (lib.rs:451).
           # We inject sccache as the compiler launcher via a toolchain file,
-          # so cmake invokes: sccache /usr/bin/cc ...
+          # so cmake invokes: sccache cc/cxx ...
           TOOLCHAIN_FILE="$HOME/sccache-toolchain.cmake"
           cat > "$TOOLCHAIN_FILE" << 'EOF'
           set(CMAKE_C_COMPILER_LAUNCHER "sccache" CACHE STRING "" FORCE)
           set(CMAKE_CXX_COMPILER_LAUNCHER "sccache" CACHE STRING "" FORCE)
           set(CMAKE_CUDA_COMPILER_LAUNCHER "sccache" CACHE STRING "" FORCE)
           EOF
+          # On Windows, cmake needs Windows-style paths (C:/Users/...), not bash paths (/c/Users/...)
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            TOOLCHAIN_FILE=$(cygpath -w "$TOOLCHAIN_FILE")
+            SCCACHE_DIR_WIN=$(cygpath -w "$HOME/.cache/sccache")
+            echo "SCCACHE_DIR=$SCCACHE_DIR_WIN" >> $GITHUB_ENV
+          else
+            echo "SCCACHE_DIR=$HOME/.cache/sccache" >> $GITHUB_ENV
+          fi
           echo "CMAKE_TOOLCHAIN_FILE=$TOOLCHAIN_FILE" >> $GITHUB_ENV
-          echo "SCCACHE_DIR=$HOME/.cache/sccache" >> $GITHUB_ENV
 
       # ── Platform-specific native deps ──
       - name: Install Linux deps (audio + GTK + Vulkan)
@@ -224,15 +231,19 @@ jobs:
             -DCMAKE_INSTALL_PREFIX="$sdkDir"
           cmake --install "$env:TEMP\SPIRV-Headers\build"
 
-          # 3. glslc (shader compiler from Google shaderc prebuilt)
-          $glslcZip = "$env:TEMP\glslc.zip"
-          curl.exe -L --retry 3 --connect-timeout 15 --max-time 300 `
-            -o $glslcZip `
-            "https://storage.googleapis.com/shaderc/artifacts/prod/graphics_shader_compiler/shaderc/windows/release/stable/1/image.zip"
-          if (-not (Test-Path $glslcZip)) { throw "glslc download failed" }
-          $glslcSize = (Get-Item $glslcZip).Length
-          if ($glslcSize -lt 1KB) { throw "glslc download too small: $glslcSize bytes" }
-          Expand-Archive -Path $glslcZip -DestinationPath "$env:TEMP\shaderc" -Force
+          # 3. glslc (shader compiler from Google shaderc continuous build)
+          # The download URL changes with each build; we get the latest URL from the badge page.
+          $badgePage = curl.exe -L -s "https://storage.googleapis.com/shaderc/badges/build_link_windows_vs2022_amd64_release.html"
+          $glslcUrl = [regex]::Match($badgePage, 'url=([^"]+)').Groups[1].Value
+          if (-not $glslcUrl) { throw "Failed to find shaderc download URL from badge page" }
+          Write-Output "Downloading glslc from: $glslcUrl"
+          $glslcTgz = "$env:TEMP\glslc.tgz"
+          curl.exe -L --retry 3 --connect-timeout 15 --max-time 300 -o $glslcTgz $glslcUrl
+          if (-not (Test-Path $glslcTgz)) { throw "glslc download failed" }
+          $glslcSize = (Get-Item $glslcTgz).Length
+          if ($glslcSize -lt 100KB) { throw "glslc download too small: $glslcSize bytes" }
+          # Extract .tgz (Windows has built-in tar)
+          tar xzf $glslcTgz -C "$env:TEMP\shaderc"
           $glslc = Get-ChildItem -Path "$env:TEMP\shaderc" -Recurse -Filter "glslc.exe" | Select-Object -First 1
           if ($glslc) {
             Copy-Item -Path $glslc.FullName -Destination "$sdkDir\Bin\glslc.exe"
