@@ -131,7 +131,7 @@ jobs:
             libxdo-dev
           # Vulkan SDK for llama.cpp Vulkan backend
           if [[ "${{ matrix.features }}" == *"vulkan"* ]]; then
-            sudo apt-get install -y libvulkan-dev libvulkan1 vulkan-tools
+            sudo apt-get install -y libvulkan-dev libvulkan1 vulkan-tools glslc
           fi
 
       - name: Install CUDA Toolkit (Linux)

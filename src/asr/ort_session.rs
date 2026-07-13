@@ -3,7 +3,6 @@ use ort::session::{Session, builder::GraphOptimizationLevel};
 use std::path::Path;
 
 pub struct OrtSessionConfig {
-    #[allow(dead_code)]
     pub use_gpu: bool,
 }
 
@@ -17,7 +16,7 @@ fn ort_err(e: impl std::fmt::Display) -> anyhow::Error {
     anyhow::anyhow!("ONNX Runtime error: {e}")
 }
 
-pub fn create_session(path: &Path, _config: &OrtSessionConfig) -> Result<Session> {
+pub fn create_session(path: &Path, config: &OrtSessionConfig) -> Result<Session> {
     let builder = Session::builder()
         .map_err(ort_err)?
         .with_optimization_level(GraphOptimizationLevel::Level3)
