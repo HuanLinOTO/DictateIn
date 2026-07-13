@@ -130,8 +130,16 @@ jobs:
             libgdk-pixbuf2.0-dev \
             libxdo-dev
           # Vulkan SDK for llama.cpp Vulkan backend
+          # llama.cpp 0.1.151 Vulkan backend requires: glslc (shader compiler),
+          # libvulkan-dev (loader/headers), and SPIRV-Headers CMake config package.
+          # Ubuntu's spirv-headers package may not ship the CMake config file,
+          # so we install SPIRV-Headers from source to /usr/local.
           if [[ "${{ matrix.features }}" == *"vulkan"* ]]; then
-            sudo apt-get install -y libvulkan-dev libvulkan1 vulkan-tools glslc
+            sudo apt-get install -y libvulkan-dev libvulkan1 vulkan-tools glslc spirv-headers
+            # Install SPIRV-Headers from source (provides CMake config)
+            git clone --depth 1 https://github.com/KhronosGroup/SPIRV-Headers.git /tmp/SPIRV-Headers
+            cmake -S /tmp/SPIRV-Headers -B /tmp/SPIRV-Headers/build -DCMAKE_INSTALL_PREFIX=/usr/local
+            sudo cmake --install /tmp/SPIRV-Headers/build
           fi
 
       - name: Install CUDA Toolkit (Linux)
