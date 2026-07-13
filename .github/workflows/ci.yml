@@ -173,6 +173,16 @@ jobs:
         if: runner.os == 'Linux' && contains(matrix.features, 'cuda')
         run: |
           sudo apt-get install -y nvidia-cuda-toolkit
+          # Ubuntu's nvidia-cuda-toolkit installs to /usr (headers in /usr/include,
+          # libs in /usr/lib/x86_64-linux-gnu). find_cuda_helper expects
+          # /usr/local/cuda or CUDA_PATH with targets/x86_64-linux layout.
+          # Create symlink structure so both find_cuda_helper and cmake FindCUDAToolkit work.
+          sudo mkdir -p /usr/local/cuda/targets/x86_64-linux
+          sudo ln -sf /usr/include /usr/local/cuda/targets/x86_64-linux/include
+          sudo ln -sf /usr/lib/x86_64-linux-gnu /usr/local/cuda/targets/x86_64-linux/lib
+          sudo ln -sf /usr/lib/nvidia-cuda-toolkit /usr/local/cuda/bin 2>/dev/null || true
+          echo "CUDA_PATH=/usr/local/cuda" >> $GITHUB_ENV
+          echo "CUDAToolkit_ROOT=/usr/local/cuda" >> $GITHUB_ENV
 
       - name: Install CUDA Toolkit (Windows)
         if: runner.os == 'Windows' && contains(matrix.features, 'cuda')
@@ -192,7 +202,7 @@ jobs:
       - name: Install Linux CUDA libs for ort (Linux)
         if: runner.os == 'Linux' && contains(matrix.features, 'cuda')
         run: |
-          echo "ORT_LIB_CUDA=/usr/local/cuda/lib64" >> $GITHUB_ENV
+          echo "ORT_LIB_CUDA=/usr/local/cuda/targets/x86_64-linux/lib" >> $GITHUB_ENV
 
       # ── Build ──
       - name: Build
