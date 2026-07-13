@@ -204,7 +204,15 @@ jobs:
         shell: pwsh
         run: |
           $vulkanInstaller = "$env:TEMP\vulkan-installer.exe"
-          Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/1.3.296.0/windows/vulkan-sdk.exe" -OutFile $vulkanInstaller
+          # Use curl.exe instead of Invoke-WebRequest for better timeout/retry control.
+          # The Vulkan SDK installer is ~300MB; lunarg.com redirects to CDN.
+          curl.exe -L --retry 5 --retry-delay 10 --connect-timeout 30 --max-time 900 `
+            -o $vulkanInstaller `
+            "https://sdk.lunarg.com/sdk/download/1.3.296.0/windows/vulkan-sdk.exe"
+          if (-not (Test-Path $vulkanInstaller)) { throw "Vulkan SDK download failed" }
+          $size = (Get-Item $vulkanInstaller).Length
+          if ($size -lt 10MB) { throw "Downloaded file too small: $size bytes" }
+          Write-Output "Downloaded Vulkan SDK installer: $([math]::Round($size / 1MB)) MB"
           Start-Process -FilePath $vulkanInstaller -ArgumentList "--accept-licenses --default --silent" -Wait
 
       - name: Set VULKAN_SDK env (Windows)
