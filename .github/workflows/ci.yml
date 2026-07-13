@@ -18,7 +18,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   check:
     name: Lint & Test
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -35,8 +35,7 @@ jobs:
             libpango1.0-dev \
             libcairo2-dev \
             libgdk-pixbuf2.0-dev \
-            libxdo-dev
-      - name: Check
+            libxdo-dev      - name: Check
         run: cargo check --locked
       - name: Test
         run: cargo test --locked
@@ -87,17 +86,17 @@ jobs:
 
           # ── Linux ──
           - name: linux-x64-cpu
-            os: ubuntu-22.04
+            os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             features: ""
             archive: tar.gz
           - name: linux-x64-vulkan
-            os: ubuntu-22.04
+            os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             features: "gpu-vulkan"
             archive: tar.gz
           - name: linux-x64-cuda
-            os: ubuntu-22.04
+            os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             features: "gpu-cuda"
             archive: tar.gz
@@ -237,7 +236,7 @@ jobs:
     name: Release
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
