@@ -255,20 +255,28 @@ jobs:
             throw "glslc.exe not found in shaderc archive"
           }
 
-          # 4. vulkan-1.lib — generate import library from system vulkan-1.dll
-          $vulkanDll = "C:\Windows\System32\vulkan-1.dll"
+          # 4. vulkan-1.lib — generate import library from Vulkan API headers
+          #    (Windows runner may not have vulkan-1.dll, so we extract function
+          #    names from vulkan_core.h and create a .def file)
+          $vulkanCoreH = "$sdkDir\Include\vulkan\vulkan_core.h"
+          if (-not (Test-Path $vulkanCoreH)) { throw "vulkan_core.h not found at $vulkanCoreH" }
+          $headerContent = Get-Content $vulkanCoreH -Raw
+          # Extract all VKAPI_CALL function names: "VKAPI_CALL vkFooBar"
+          $funcs = [regex]::Matches($headerContent, 'VKAPI_CALL\s+(vk\w+)') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
+          if ($funcs.Count -eq 0) { throw "No Vulkan API functions found in header" }
+          Write-Output "Found $($funcs.Count) Vulkan API functions"
+          $defContent = "LIBRARY vulkan-1.dll`nEXPORTS`n" + (($funcs | ForEach-Object { $_ }) -join "`n")
+          $defFile = "$env:TEMP\vulkan-1.def"
+          $defContent | Out-File -FilePath $defFile -Encoding ASCII
+          # Find lib.exe
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           $libExe = & $vswhere -latest -find "VC\Tools\MSVC\*\bin\Hostx64\x64\lib.exe" | Select-Object -First 1
-          $dumpbin = & $vswhere -latest -find "VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1
-          if ($libExe -and $dumpbin -and (Test-Path $vulkanDll)) {
-            $defFile = "$env:TEMP\vulkan-1.def"
-            & $dumpbin /exports $vulkanDll | Select-String "^\s+\d+\s+\w+\s+(\w+)" | ForEach-Object { $matches[1] } | Sort-Object -Unique | ForEach-Object { "EXPORTS`n$_" } | Out-File -FilePath $defFile -Encoding ASCII
-            & $libExe "/def:$defFile" "/out:$sdkDir\Lib\vulkan-1.lib" /machine:x64
-            Write-Output "Generated vulkan-1.lib from system DLL"
-          }
+          if (-not $libExe -or -not (Test-Path $libExe)) { throw "lib.exe not found" }
+          & $libExe "/def:$defFile" "/out:$sdkDir\Lib\vulkan-1.lib" /machine:x64
           if (-not (Test-Path "$sdkDir\Lib\vulkan-1.lib")) {
             throw "Failed to create vulkan-1.lib"
           }
+          Write-Output "Generated vulkan-1.lib with $($funcs.Count) exports"
 
           Write-Output "=== Vulkan SDK layout ==="
           Get-ChildItem -Path $sdkDir -Recurse -File | ForEach-Object { Write-Output "  $($_.FullName)" }
