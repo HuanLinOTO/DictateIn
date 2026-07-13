@@ -210,68 +210,54 @@ jobs:
           $sdkDir = 'C:\VulkanSDK'
           New-Item -ItemType Directory -Force -Path "$sdkDir\Include", "$sdkDir\Lib", "$sdkDir\Bin" | Out-Null
 
-          # 1. Vulkan-Headers (just header files, ~200KB zip from GitHub)
-          $headersZip = "$env:TEMP\vulkan-headers.zip"
-          curl.exe -L --retry 3 --connect-timeout 15 --max-time 120 `
-            -o $headersZip `
-            "https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/v1.3.296.0.zip"
-          Expand-Archive -Path $headersZip -DestinationPath "$env:TEMP\vulkan-headers" -Force
-          Copy-Item -Path "$env:TEMP\vulkan-headers\Vulkan-Headers-1.3.296.0\include\*" `
-                    -Destination "$sdkDir\Include\" -Recurse -Force
+          # 1. Vulkan-Headers (header files + cmake config)
+          git clone --depth 1 --branch vulkan-sdk-1.3.296.0 `
+            https://github.com/KhronosGroup/Vulkan-Headers.git "$env:TEMP\Vulkan-Headers"
+          cmake -S "$env:TEMP\Vulkan-Headers" -B "$env:TEMP\Vulkan-Headers\build" `
+            -DCMAKE_INSTALL_PREFIX="$sdkDir"
+          cmake --install "$env:TEMP\Vulkan-Headers\build"
 
           # 2. SPIRV-Headers (required by llama.cpp Vulkan backend cmake)
-          $spirvZip = "$env:TEMP\spirv-headers.zip"
-          curl.exe -L --retry 3 --connect-timeout 15 --max-time 120 `
-            -o $spirvZip `
-            "https://github.com/KhronosGroup/SPIRV-Headers/archive/refs/tags/1.5.1.raytracing.fixed.zip"
-          Expand-Archive -Path $spirvZip -DestinationPath "$env:TEMP\spirv-headers" -Force
-          # Install SPIRV-Headers cmake config so find_package(SPIRV-Headers) works
-          Push-Location "$env:TEMP\spirv-headers\spirv-headers-1.5.1.raytracing.fixed"
-          cmake -S . -B build -DCMAKE_INSTALL_PREFIX="$sdkDir"
-          cmake --install build
-          Pop-Location
-          Copy-Item -Path "$env:TEMP\spirv-headers\spirv-headers-1.5.1.raytracing.fixed\include\*" `
-                    -Destination "$sdkDir\Include\" -Recurse -Force
+          git clone --depth 1 --branch vulkan-sdk-1.3.296.0 `
+            https://github.com/KhronosGroup/SPIRV-Headers.git "$env:TEMP\SPIRV-Headers"
+          cmake -S "$env:TEMP\SPIRV-Headers" -B "$env:TEMP\SPIRV-Headers\build" `
+            -DCMAKE_INSTALL_PREFIX="$sdkDir"
+          cmake --install "$env:TEMP\SPIRV-Headers\build"
 
-          # 3. glslc (shader compiler from Google shaderc prebuilt releases)
+          # 3. glslc (shader compiler from Google shaderc prebuilt)
           $glslcZip = "$env:TEMP\glslc.zip"
-          curl.exe -L --retry 3 --connect-timeout 15 --max-time 120 `
+          curl.exe -L --retry 3 --connect-timeout 15 --max-time 300 `
             -o $glslcZip `
             "https://storage.googleapis.com/shaderc/artifacts/prod/graphics_shader_compiler/shaderc/windows/release/stable/1/image.zip"
+          if (-not (Test-Path $glslcZip)) { throw "glslc download failed" }
+          $glslcSize = (Get-Item $glslcZip).Length
+          if ($glslcSize -lt 1KB) { throw "glslc download too small: $glslcSize bytes" }
           Expand-Archive -Path $glslcZip -DestinationPath "$env:TEMP\shaderc" -Force
           $glslc = Get-ChildItem -Path "$env:TEMP\shaderc" -Recurse -Filter "glslc.exe" | Select-Object -First 1
           if ($glslc) {
             Copy-Item -Path $glslc.FullName -Destination "$sdkDir\Bin\glslc.exe"
+            Write-Output "glslc installed from: $($glslc.FullName)"
           } else {
             throw "glslc.exe not found in shaderc archive"
           }
 
-          # 4. vulkan-1.lib — generate a minimal import library from the system vulkan-1.dll
-          #    Windows has vulkan-1.dll in System32; we create an import lib using dumpbin/lib.
+          # 4. vulkan-1.lib — generate import library from system vulkan-1.dll
           $vulkanDll = "C:\Windows\System32\vulkan-1.dll"
-          if (Test-Path $vulkanDll) {
-            # Use lib.exe from Visual Studio to create import library
-            $libExe = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -find "VC\Tools\MSVC\*\bin\Hostx64\x64\lib.exe" | Select-Object -First 1
-            if ($libExe -and (Test-Path $libExe)) {
-              $defFile = "$env:TEMP\vulkan-1.def"
-              $dumpbin = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -find "VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1
-              if ($dumpbin -and (Test-Path $dumpbin)) {
-                & $dumpbin /exports $vulkanDll | Select-String "^\s+\d+\s+\w+\s+(\w+)" | ForEach-Object { $matches[1] } | Sort-Object -Unique | ForEach-Object { "EXPORTS`n$_" } | Out-File -FilePath $defFile -Encoding ASCII
-                & $libExe /def:$defFile /out:"$sdkDir\Lib\vulkan-1.lib" /machine:x64
-              }
-            }
-            # Fallback: if lib.exe approach fails, use the .lib from Windows SDK if available
-            if (-not (Test-Path "$sdkDir\Lib\vulkan-1.lib")) {
-              $winSdkLib = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\Lib" -Directory | Sort-Object Name -Descending | Select-Object -First 1
-              if ($winSdkLib) {
-                $srcLib = Join-Path $winSdkLib.FullName "um\x64\vulkan-1.lib"
-                if (Test-Path $srcLib) { Copy-Item $srcLib "$sdkDir\Lib\vulkan-1.lib" }
-              }
-            }
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $libExe = & $vswhere -latest -find "VC\Tools\MSVC\*\bin\Hostx64\x64\lib.exe" | Select-Object -First 1
+          $dumpbin = & $vswhere -latest -find "VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1
+          if ($libExe -and $dumpbin -and (Test-Path $vulkanDll)) {
+            $defFile = "$env:TEMP\vulkan-1.def"
+            & $dumpbin /exports $vulkanDll | Select-String "^\s+\d+\s+\w+\s+(\w+)" | ForEach-Object { $matches[1] } | Sort-Object -Unique | ForEach-Object { "EXPORTS`n$_" } | Out-File -FilePath $defFile -Encoding ASCII
+            & $libExe "/def:$defFile" "/out:$sdkDir\Lib\vulkan-1.lib" /machine:x64
+            Write-Output "Generated vulkan-1.lib from system DLL"
+          }
+          if (-not (Test-Path "$sdkDir\Lib\vulkan-1.lib")) {
+            throw "Failed to create vulkan-1.lib"
           }
 
-          Write-Output "Vulkan SDK layout:"
-          Get-ChildItem -Path $sdkDir -Recurse -File | ForEach-Object { Write-Output "  $($_.FullName.Replace($sdkDir, '...'))" }
+          Write-Output "=== Vulkan SDK layout ==="
+          Get-ChildItem -Path $sdkDir -Recurse -File | ForEach-Object { Write-Output "  $($_.FullName)" }
 
       - name: Set VULKAN_SDK env (Windows)
         if: runner.os == 'Windows' && contains(matrix.features, 'vulkan')
