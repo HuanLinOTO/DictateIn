@@ -191,13 +191,30 @@ jobs:
           cuda: '12.4.1'
           method: 'network'
 
-      - name: Install Vulkan SDK (Windows)
+      - name: Cache Vulkan SDK (Windows)
         if: runner.os == 'Windows' && contains(matrix.features, 'vulkan')
+        id: cache-vulkan
+        uses: actions/cache@v4
+        with:
+          path: C:\VulkanSDK
+          key: vulkan-sdk-windows-1.3.296.0-v1
+
+      - name: Install Vulkan SDK (Windows)
+        if: runner.os == 'Windows' && contains(matrix.features, 'vulkan') && steps.cache-vulkan.outputs.cache-hit != 'true'
+        shell: pwsh
         run: |
           $vulkanInstaller = "$env:TEMP\vulkan-installer.exe"
-          Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe" -OutFile $vulkanInstaller
+          Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/1.3.296.0/windows/vulkan-sdk.exe" -OutFile $vulkanInstaller
           Start-Process -FilePath $vulkanInstaller -ArgumentList "--accept-licenses --default --silent" -Wait
-          echo "VULKAN_SDK=C:\VulkanSDK" >> $env:GITHUB_ENV
+
+      - name: Set VULKAN_SDK env (Windows)
+        if: runner.os == 'Windows' && contains(matrix.features, 'vulkan')
+        shell: pwsh
+        run: |
+          $vulkanSdk = Get-ChildItem -Path "C:\VulkanSDK" -Directory | Select-Object -First 1
+          if (-not $vulkanSdk) { throw "Vulkan SDK not found in C:\VulkanSDK" }
+          echo "VULKAN_SDK=$($vulkanSdk.FullName)" >> $env:GITHUB_ENV
+          echo "Vulkan SDK at: $($vulkanSdk.FullName)"
 
       - name: Install Linux CUDA libs for ort (Linux)
         if: runner.os == 'Linux' && contains(matrix.features, 'cuda')
