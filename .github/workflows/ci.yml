@@ -114,6 +114,33 @@ jobs:
         with:
           key: ${{ matrix.name }}
 
+      # ── sccache: cache C/C++ compilation (llama.cpp is the bottleneck) ──
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
+
+      - name: Cache sccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/sccache
+          key: sccache-${{ matrix.name }}-v1-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            sccache-${{ matrix.name }}-v1-
+
+      - name: Configure sccache for cmake
+        shell: bash
+        run: |
+          # cmake crate (0.1.58) reads CMAKE_TOOLCHAIN_FILE env var (lib.rs:451).
+          # We inject sccache as the compiler launcher via a toolchain file,
+          # so cmake invokes: sccache /usr/bin/cc ...
+          TOOLCHAIN_FILE="$HOME/sccache-toolchain.cmake"
+          cat > "$TOOLCHAIN_FILE" << 'EOF'
+          set(CMAKE_C_COMPILER_LAUNCHER "sccache" CACHE STRING "" FORCE)
+          set(CMAKE_CXX_COMPILER_LAUNCHER "sccache" CACHE STRING "" FORCE)
+          set(CMAKE_CUDA_COMPILER_LAUNCHER "sccache" CACHE STRING "" FORCE)
+          EOF
+          echo "CMAKE_TOOLCHAIN_FILE=$TOOLCHAIN_FILE" >> $GITHUB_ENV
+          echo "SCCACHE_DIR=$HOME/.cache/sccache" >> $GITHUB_ENV
+
       # ── Platform-specific native deps ──
       - name: Install Linux deps (audio + GTK + Vulkan)
         if: runner.os == 'Linux'
