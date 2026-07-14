@@ -38,6 +38,10 @@ impl LlamaEmbeddingRuntime {
         context_params.n_ubatch = context_size.min(512);
         context_params.n_threads = available_threads();
         context_params.n_threads_batch = available_threads();
+        #[cfg(any(feature = "llama-vulkan", feature = "llama-cuda", feature = "llama-rocm"))]
+        {
+            context_params.flash_attn_type = sys::LLAMA_FLASH_ATTN_TYPE_ENABLED;
+        }
         let context = unsafe { sys::llama_init_from_model(model, context_params) };
         if context.is_null() {
             unsafe {
