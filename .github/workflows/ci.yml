@@ -115,7 +115,10 @@ jobs:
           # Use Ninja generator instead of Visual Studio to avoid PDB path length issues
           # in ExternalProject (vulkan-shaders-gen). Ninja is preinstalled on windows-2022.
           echo "CMAKE_GENERATOR=Ninja" >> $env:GITHUB_ENV
-          Write-Output "Long paths enabled + CMAKE_GENERATOR=Ninja"
+          # Short target dir to avoid cmake CMAKE_OBJECT_PATH_MAX (250 char) limit
+          # in vulkan-shaders-gen ExternalProject paths
+          echo "CARGO_TARGET_DIR=C:\td" >> $env:GITHUB_ENV
+          Write-Output "Long paths + Ninja + short target dir enabled"
 
       - uses: dtolnay/rust-toolchain@stable
         with:
