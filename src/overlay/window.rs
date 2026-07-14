@@ -78,7 +78,8 @@ mod platform {
     use windows::Win32::Graphics::DirectWrite::{
         DWriteCreateFactory, DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL,
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_MEASURING_MODE_NATURAL,
-        DWRITE_TEXT_METRICS, IDWriteFactory, IDWriteTextFormat, IDWriteTextLayout,
+        DWRITE_TEXT_METRICS, DWRITE_WORD_WRAPPING_NO_WRAP, IDWriteFactory, IDWriteTextFormat,
+        IDWriteTextLayout,
     };
     use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
     use windows::Win32::Graphics::Gdi::{
@@ -173,6 +174,10 @@ mod platform {
             )
         }
         .map_err(|e| format!("text format: {e}"))?;
+
+        // Disable word wrapping so text never breaks to a second line,
+        // even during width animation when the pill is narrower than the text.
+        let _ = unsafe { text_format.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP) };
 
         let rt_props = D2D1_RENDER_TARGET_PROPERTIES {
             r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,

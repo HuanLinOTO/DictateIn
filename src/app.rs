@@ -4,7 +4,7 @@ use anyhow::Result;
 use crossbeam_channel::bounded;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
-use crate::asr::{AsrWorker, ModelSelection};
+use crate::asr::{AsrWorker, ModelKind, ModelRegistry, ModelSelection};
 use crate::audio::{AudioCommand, AudioEvent, AudioWorker, list_input_devices};
 use crate::commands::AsrCommand;
 use crate::config::SettingsStore;
@@ -294,8 +294,54 @@ pub fn run() -> Result<()> {
         }
     });
 
+    // Determine which model to load on startup.
+    // Prefer the saved model if its files are present; otherwise pick the
+    // first model whose files are actually available locally so the app
+    // doesn't show a spurious "model not found" error when the user has
+    // only downloaded a different model.
+    let startup_model = {
+        let registry = ModelRegistry::discover().ok();
+        let saved = settings.asr.model;
+        let all_kinds = [ModelKind::SenseVoice, ModelKind::FunAsrNano, ModelKind::Qwen3Asr];
+        let available = |kind| {
+            registry
+                .as_ref()
+                .and_then(|r| r.validate(kind).ok())
+                .is_some()
+        };
+        if available(saved) {
+            saved
+        } else {
+            all_kinds
+                .iter()
+                .copied()
+                .find(|k| available(*k))
+                .unwrap_or(saved)
+        }
+    };
+    if startup_model != settings.asr.model {
+        tracing::info!(
+            saved = ?settings.asr.model,
+            actual = ?startup_model,
+            "saved model not found locally, loading available model instead"
+        );
+        window.set_model_index(match startup_model {
+            ModelKind::SenseVoice => 0,
+            ModelKind::FunAsrNano => 1,
+            ModelKind::Qwen3Asr => 2,
+        });
+        window.set_model_name(match startup_model {
+            ModelKind::SenseVoice => "SenseVoice-Small".into(),
+            ModelKind::FunAsrNano => "Fun-ASR-Nano".into(),
+            ModelKind::Qwen3Asr => "Qwen3-ASR".into(),
+        });
+        window.set_model_capability_text(model_capability_text(startup_model).into());
+        if let Ok(mut active) = active_model.lock() {
+            *active = startup_model;
+        }
+    }
     command_sender.send(AsrCommand::LoadModel(ModelSelection {
-        kind: settings.asr.model,
+        kind: startup_model,
     }))?;
 
     let sender_for_model = command_sender.clone();
@@ -711,6 +757,8 @@ fn handle_asr_event(context: AsrEventContext<'_>, event: AsrEvent) {
             window.set_model_name(model.display_name.into());
             window.set_model_capability_text(model_capability_text(model.kind).into());
             window.set_status_text("就绪".into());
+            // Clear any stale error shown on the overlay from a previous failed load.
+            let _ = overlay.send(OverlayCommand::Hide);
         }
         AsrEvent::ModelLoadFailed {
             kind,
