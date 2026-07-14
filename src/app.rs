@@ -46,6 +46,7 @@ pub fn run() -> Result<()> {
         output_command_receiver,
         output_event_sender,
         OutputMode::parse(&settings.output.mode),
+        settings.output.strip_trailing_punctuation,
     );
     let overlay = OverlayWindow::spawn()?;
     let overlay_sender = overlay.sender();
@@ -76,6 +77,7 @@ pub fn run() -> Result<()> {
         "copy" | "copy_only" => 2,
         _ => 0,
     });
+    window.set_strip_trailing_punctuation(settings.output.strip_trailing_punctuation);
     let microphone_devices = list_input_devices().unwrap_or_default();
     let microphone_names = microphone_devices
         .iter()
@@ -592,7 +594,7 @@ pub fn run() -> Result<()> {
     let selected_microphone_for_save = Arc::clone(&selected_microphone);
     let active_model_for_save = Arc::clone(&active_model);
     let state_for_save = Arc::clone(&state);
-    window.on_save_settings(move |hotkey_text, hotwords_text, output_index, suppress| {
+    window.on_save_settings(move |hotkey_text, hotwords_text, output_index, suppress, strip_punct| {
         let can_save = state_for_save
             .lock()
             .map(|state| {
@@ -647,6 +649,7 @@ pub fn run() -> Result<()> {
                 settings.hotkey.suppress = suppress;
                 settings.hotwords.items = hotword_items.clone();
                 settings.output.mode = output_mode.as_str().into();
+                settings.output.strip_trailing_punctuation = strip_punct;
                 settings.asr.model = selected_model;
                 if let Ok(selected) = selected_microphone_for_save.lock()
                     && let Some((id, name)) = selected.as_ref()
@@ -669,6 +672,7 @@ pub fn run() -> Result<()> {
             hook_for_save.update_binding(binding.clone());
             let _ = hotkey_control_sender.send(HotkeyControl::UpdateBinding(binding));
             let _ = output_for_save.send(OutputCommand::SetMode(output_mode));
+            let _ = output_for_save.send(OutputCommand::SetStripPunctuation(strip_punct));
         }
         if let Some(window) = weak_window_for_save.upgrade() {
             window.set_status_text(match save_result {

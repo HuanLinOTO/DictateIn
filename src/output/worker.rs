@@ -33,6 +33,7 @@ impl OutputMode {
 pub enum OutputCommand {
     Write { session_id: u64, text: String },
     SetMode(OutputMode),
+    SetStripPunctuation(bool),
     Shutdown,
 }
 
@@ -57,10 +58,11 @@ impl OutputWorker {
         commands: Receiver<OutputCommand>,
         events: Sender<OutputEvent>,
         mode: OutputMode,
+        strip_punctuation: bool,
     ) -> Self {
         let handle = thread::Builder::new()
             .name("text-output".into())
-            .spawn(move || run(commands, events, mode))
+            .spawn(move || run(commands, events, mode, strip_punctuation))
             .expect("failed to spawn output worker");
         Self {
             handle: Some(handle),
@@ -74,10 +76,20 @@ impl OutputWorker {
     }
 }
 
-fn run(commands: Receiver<OutputCommand>, events: Sender<OutputEvent>, mut mode: OutputMode) {
+fn run(
+    commands: Receiver<OutputCommand>,
+    events: Sender<OutputEvent>,
+    mut mode: OutputMode,
+    mut strip_punctuation: bool,
+) {
     while let Ok(command) = commands.recv() {
         match command {
             OutputCommand::Write { session_id, text } => {
+                let text = if strip_punctuation {
+                    strip_trailing_punctuation(&text)
+                } else {
+                    text
+                };
                 if text.is_empty() {
                     continue;
                 }
@@ -118,6 +130,9 @@ fn run(commands: Receiver<OutputCommand>, events: Sender<OutputEvent>, mut mode:
             OutputCommand::SetMode(new_mode) => {
                 mode = new_mode;
             }
+            OutputCommand::SetStripPunctuation(value) => {
+                strip_punctuation = value;
+            }
             OutputCommand::Shutdown => break,
         }
     }
@@ -133,4 +148,15 @@ fn retain(events: &Sender<OutputEvent>, session_id: u64, text: String, reason: &
         text,
         reason,
     });
+}
+
+fn strip_trailing_punctuation(text: &str) -> String {
+    text.trim_end()
+        .trim_end_matches(|c: char| {
+            matches!(c,
+                '。' | '！' | '？' | '，' | '；' | '：' | '、' | '…' | '—' | '·' | '～'
+                | '.' | '!' | '?' | ',' | ';' | ':'
+            )
+        })
+        .to_string()
 }

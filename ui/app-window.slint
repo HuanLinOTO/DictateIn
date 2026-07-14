@@ -101,6 +101,7 @@ export component AppWindow inherits Window {
     in-out property <string> hotwords-text: "DictateIn";
     in-out property <int> output-mode-index: 0;
     in-out property <bool> suppress-hotkey: false;
+    in-out property <bool> strip-trailing-punctuation: false;
     in-out property <float> input-level: 0;
     in-out property <int> active-page: 0;
     in-out property <bool> capturing-hotkey: false;
@@ -117,7 +118,7 @@ export component AppWindow inherits Window {
     callback capture-hotkey();
     callback cancel-hotkey-capture();
     callback toggle-model-test();
-    callback save-settings(string, string, int, bool);
+    callback save-settings(string, string, int, bool, bool);
 
     VerticalLayout {
         spacing: 0px;
@@ -402,6 +403,7 @@ export component AppWindow inherits Window {
                                             root.hotwords-text,
                                             root.output-mode-index,
                                             root.suppress-hotkey,
+                                            root.strip-trailing-punctuation,
                                         );
                                     }
                                 }
@@ -435,6 +437,12 @@ export component AppWindow inherits Window {
                                 vertical-stretch: 0;
                             }
 
+                            CheckBox {
+                                text: "去除识别结果末尾标点";
+                                checked <=> root.strip-trailing-punctuation;
+                                vertical-stretch: 0;
+                            }
+
                             HorizontalLayout {
                                 spacing: 16px;
 
@@ -460,6 +468,7 @@ export component AppWindow inherits Window {
                                             root.hotwords-text,
                                             output-selector.current-index,
                                             root.suppress-hotkey,
+                                            root.strip-trailing-punctuation,
                                         );
                                     }
                                 }

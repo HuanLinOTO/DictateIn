@@ -125,12 +125,14 @@ impl Default for HotwordSettings {
 #[serde(default)]
 pub struct OutputSettings {
     pub mode: String,
+    pub strip_trailing_punctuation: bool,
 }
 
 impl Default for OutputSettings {
     fn default() -> Self {
         Self {
             mode: "unicode".into(),
+            strip_trailing_punctuation: false,
         }
     }
 }
