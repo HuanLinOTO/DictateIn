@@ -132,21 +132,25 @@ jobs:
           # cmake crate (0.1.58) reads CMAKE_TOOLCHAIN_FILE env var (lib.rs:451).
           # We inject sccache as the compiler launcher via a toolchain file,
           # so cmake invokes: sccache cc/cxx ...
-          TOOLCHAIN_FILE="$HOME/sccache-toolchain.cmake"
-          cat > "$TOOLCHAIN_FILE" << 'EOF'
+          # NOTE: On Windows, the toolchain file breaks ExternalProject (vulkan-shaders-gen),
+          # so we only use it on Linux/macOS. Windows relies on rust-cache for caching.
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            echo "Skipping cmake toolchain on Windows (breaks ExternalProject)"
+          else
+            TOOLCHAIN_FILE="$HOME/sccache-toolchain.cmake"
+            cat > "$TOOLCHAIN_FILE" << 'EOF'
           set(CMAKE_C_COMPILER_LAUNCHER "sccache" CACHE STRING "" FORCE)
           set(CMAKE_CXX_COMPILER_LAUNCHER "sccache" CACHE STRING "" FORCE)
           set(CMAKE_CUDA_COMPILER_LAUNCHER "sccache" CACHE STRING "" FORCE)
           EOF
-          # On Windows, cmake needs Windows-style paths (C:/Users/...), not bash paths (/c/Users/...)
+            echo "CMAKE_TOOLCHAIN_FILE=$TOOLCHAIN_FILE" >> $GITHUB_ENV
+          fi
+          # Set SCCACHE_DIR for all platforms
           if [ "$RUNNER_OS" = "Windows" ]; then
-            TOOLCHAIN_FILE=$(cygpath -w "$TOOLCHAIN_FILE")
-            SCCACHE_DIR_WIN=$(cygpath -w "$HOME/.cache/sccache")
-            echo "SCCACHE_DIR=$SCCACHE_DIR_WIN" >> $GITHUB_ENV
+            echo "SCCACHE_DIR=$HOME/.cache/sccache" >> $GITHUB_ENV
           else
             echo "SCCACHE_DIR=$HOME/.cache/sccache" >> $GITHUB_ENV
           fi
-          echo "CMAKE_TOOLCHAIN_FILE=$TOOLCHAIN_FILE" >> $GITHUB_ENV
 
       # ── Platform-specific native deps ──
       - name: Install Linux deps (audio + GTK + Vulkan)
