@@ -42,7 +42,7 @@ jobs:
         run: cargo test --locked
 
   # ─────────────────────────────────────────────────────────────────────
-  # Build matrix — 3 platforms × GPU backends
+  # Build matrix — supported platforms × GPU backends
   # ─────────────────────────────────────────────────────────────────────
   build:
     name: Build ${{ matrix.name }}
@@ -79,12 +79,6 @@ jobs:
             target: aarch64-apple-darwin
             features: "gpu-metal"
             archive: tar.gz
-          - name: macos-x86_64-cpu
-            os: macos-13
-            target: x86_64-apple-darwin
-            features: ""
-            archive: tar.gz
-
           # ── Linux ──
           - name: linux-x64-cpu
             os: ubuntu-24.04
