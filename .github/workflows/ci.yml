@@ -106,6 +106,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Enable Windows long paths
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" `
+            -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force | Out-Null
+          # Use Ninja generator instead of Visual Studio to avoid PDB path length issues
+          # in ExternalProject (vulkan-shaders-gen). Ninja is preinstalled on windows-2022.
+          echo "CMAKE_GENERATOR=Ninja" >> $env:GITHUB_ENV
+          Write-Output "Long paths enabled + CMAKE_GENERATOR=Ninja"
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
