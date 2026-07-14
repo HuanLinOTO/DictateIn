@@ -106,8 +106,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Enable Windows long paths
-        if: runner.os == 'Windows'
+      - name: Enable Windows long paths (Vulkan builds)
+        if: runner.os == 'Windows' && contains(matrix.features, 'vulkan')
         shell: pwsh
         run: |
           New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" `
@@ -118,7 +118,7 @@ jobs:
           # Short target dir to avoid cmake CMAKE_OBJECT_PATH_MAX (250 char) limit
           # in vulkan-shaders-gen ExternalProject paths
           echo "CARGO_TARGET_DIR=C:\td" >> $env:GITHUB_ENV
-          Write-Output "Long paths + Ninja + short target dir enabled"
+          Write-Output "Long paths + Ninja + short target dir enabled (Vulkan only)"
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -329,23 +329,26 @@ jobs:
           STAGING="staging/dictate-in-${{ matrix.name }}"
           mkdir -p "$STAGING"/{config,models,logs,cache}
 
+          # Determine target dir (CARGO_TARGET_DIR may be set for Vulkan builds)
+          TARGET_DIR="${CARGO_TARGET_DIR:-target}"
+
           # Binary
           BIN_NAME="dictate-in"
           if [ "${{ runner.os }}" = "Windows" ]; then
             BIN_NAME="dictate-in.exe"
           fi
-          cp "target/${{ matrix.target }}/release/$BIN_NAME" "$STAGING/"
+          cp "$TARGET_DIR/${{ matrix.target }}/release/$BIN_NAME" "$STAGING/"
 
           # Shared libraries (DLLs / dylibs / .so)
           case "${{ runner.os }}" in
             Windows)
-              cp target/${{ matrix.target }}/release/*.dll "$STAGING/" 2>/dev/null || true
+              cp "$TARGET_DIR/${{ matrix.target }}/release/"*.dll "$STAGING/" 2>/dev/null || true
               ;;
             macOS)
-              cp target/${{ matrix.target }}/release/*.dylib "$STAGING/" 2>/dev/null || true
+              cp "$TARGET_DIR/${{ matrix.target }}/release/"*.dylib "$STAGING/" 2>/dev/null || true
               ;;
             Linux)
-              cp target/${{ matrix.target }}/release/*.so "$STAGING/" 2>/dev/null || true
+              cp "$TARGET_DIR/${{ matrix.target }}/release/"*.so "$STAGING/" 2>/dev/null || true
               # Vulkan/CUDA runtime libs
               if [[ "${{ matrix.features }}" == *"vulkan"* ]]; then
                 cp /usr/lib/x86_64-linux-gnu/libvulkan.so* "$STAGING/" 2>/dev/null || true
