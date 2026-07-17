@@ -19,6 +19,9 @@ pub enum AsrEvent {
         text: String,
         metrics: RecognitionMetrics,
     },
+    SessionCancelled {
+        session_id: u64,
+    },
     Error {
         session_id: Option<u64>,
         error: AsrError,

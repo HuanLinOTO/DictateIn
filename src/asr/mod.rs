@@ -47,9 +47,9 @@ pub struct Hotword {
 }
 
 #[derive(Debug)]
-pub struct AudioChunk {
-    pub session_id: u64,
-    pub samples: Vec<f32>,
+pub enum AudioChunk {
+    Samples { session_id: u64, samples: Vec<f32> },
+    SegmentBoundary { session_id: u64 },
 }
 
 #[derive(Debug, Clone, Default)]

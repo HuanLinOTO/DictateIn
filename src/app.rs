@@ -28,7 +28,7 @@ pub fn run() -> Result<()> {
     let settings = settings_store.load_or_default()?;
 
     let (command_sender, command_receiver) = bounded(32);
-    let (asr_audio_sender, asr_audio_receiver) = bounded(32);
+    let (asr_audio_sender, asr_audio_receiver) = bounded(256);
     let (event_sender, event_receiver) = bounded(32);
     let worker = AsrWorker::spawn(command_receiver, asr_audio_receiver, event_sender);
     let (audio_command_sender, audio_command_receiver) = bounded(16);
@@ -269,7 +269,7 @@ pub fn run() -> Result<()> {
                     if let Some(session_id) = session_id {
                         let _ = asr_for_audio.send(AsrCommand::CancelSession { session_id });
                         if let Ok(mut state) = state_for_audio.lock() {
-                            state.complete_session(session_id);
+                            state.mark_error();
                         }
                         if let Ok(mut test_session) = model_test_for_audio.lock()
                             && *test_session == Some(session_id)
@@ -456,7 +456,10 @@ pub fn run() -> Result<()> {
             hotwords: session_hotwords,
             enable_partials: false,
         });
-        let _ = audio_for_model_test.send(AudioCommand::Start { session_id });
+        let _ = audio_for_model_test.send(AudioCommand::Start {
+            session_id,
+            segment_on_silence: false,
+        });
         tracing::info!(session_id, "model test start commands sent");
         window.set_model_test_state(1);
         window.set_model_test_result("正在录音，请说话后点击停止".into());
@@ -559,7 +562,10 @@ pub fn run() -> Result<()> {
                                     hotwords: session_hotwords,
                                     enable_partials: false,
                                 });
-                                let _ = audio_for_hotkey.send(AudioCommand::Start { session_id });
+                                let _ = audio_for_hotkey.send(AudioCommand::Start {
+                                    session_id,
+                                    segment_on_silence: true,
+                                });
                                 let _ = overlay_for_hotkey.send(OverlayCommand::Listening {
                                     text: "正在聆听...".into(),
                                 });
@@ -799,7 +805,10 @@ fn handle_asr_event(context: AsrEventContext<'_>, event: AsrEvent) {
         } => {
             let accepts = state
                 .lock()
-                .map(|state| state.accepts(session_id))
+                .map(|state| {
+                    state.accepts(session_id)
+                        && state.app_state == crate::state::AppState::Listening
+                })
                 .unwrap_or(false);
             if accepts {
                 tracing::debug!(
@@ -872,6 +881,14 @@ fn handle_asr_event(context: AsrEventContext<'_>, event: AsrEvent) {
                 window.set_status_text("正在上屏".into());
                 let _ = overlay.send(OverlayCommand::Injecting { text: text.clone() });
                 let _ = output.send(OutputCommand::Write { session_id, text });
+            }
+        }
+        AsrEvent::SessionCancelled { session_id } => {
+            tracing::info!(session_id, "ASR session cancellation completed");
+            if let Ok(mut state) = state.lock()
+                && state.app_state == crate::state::AppState::Error
+            {
+                state.mark_ready();
             }
         }
         AsrEvent::Error { session_id, error } => {

@@ -1,16 +1,25 @@
 use std::thread::{self, JoinHandle};
 
-use crossbeam_channel::{Receiver, Sender, bounded};
+use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
 
 use crate::asr::AudioChunk;
 
-use super::{AudioCapture, AudioResampler, AudioRingBuffer, CapturedAudio};
+use super::{
+    AudioCapture, AudioResampler, AudioRingBuffer, CapturedAudio, SilenceDetector, SilenceState,
+};
 
 #[derive(Debug)]
 pub enum AudioCommand {
-    Start { session_id: u64 },
-    Stop { session_id: u64 },
-    SelectDevice { name: String },
+    Start {
+        session_id: u64,
+        segment_on_silence: bool,
+    },
+    Stop {
+        session_id: u64,
+    },
+    SelectDevice {
+        name: String,
+    },
     Shutdown,
 }
 
@@ -35,6 +44,24 @@ pub enum AudioEvent {
 
 pub struct AudioWorker {
     handle: Option<JoinHandle<()>>,
+}
+
+struct AudioPipeline {
+    resampler: AudioResampler,
+    ring_buffer: AudioRingBuffer,
+    pre_roll: AudioRingBuffer,
+    silence_detector: Option<SilenceDetector>,
+}
+
+impl AudioPipeline {
+    fn new(input_sample_rate: u32, segment_on_silence: bool) -> anyhow::Result<Self> {
+        Ok(Self {
+            resampler: AudioResampler::new(input_sample_rate, 16_000)?,
+            ring_buffer: AudioRingBuffer::new(160_000),
+            pre_roll: AudioRingBuffer::new(4_800),
+            silence_detector: segment_on_silence.then(|| SilenceDetector::new(16_000)),
+        })
+    }
 }
 
 impl AudioWorker {
@@ -74,8 +101,7 @@ fn run(
     });
 
     let mut active_session = None;
-    let mut resampler = None;
-    let mut ring_buffer = AudioRingBuffer::new(160_000);
+    let mut pipeline = None;
     let mut dropped_blocks_at_start = capture.dropped_blocks();
     loop {
         crossbeam_channel::select! {
@@ -84,13 +110,15 @@ fn run(
                     break;
                 };
                 match command {
-                    AudioCommand::Start { session_id } => {
+                    AudioCommand::Start {
+                        session_id,
+                        segment_on_silence,
+                    } => {
                         tracing::info!(session_id, sample_rate = capture.sample_rate, "audio start command received");
-                        match AudioResampler::new(capture.sample_rate, 16_000) {
-                            Ok(new_resampler) => {
+                        match AudioPipeline::new(capture.sample_rate, segment_on_silence) {
+                            Ok(new_pipeline) => {
                                 tracing::info!(session_id, "audio resampler created");
-                                resampler = Some(new_resampler);
-                                ring_buffer = AudioRingBuffer::new(160_000);
+                                pipeline = Some(new_pipeline);
                                 dropped_blocks_at_start = capture.dropped_blocks();
                                 active_session = Some(session_id);
                                 tracing::info!(session_id, "starting CPAL input stream");
@@ -117,31 +145,89 @@ fn run(
                             continue;
                         }
                         let _ = capture.pause();
+                        let mut processing_error = None;
                         while let Ok(block) = capture_receiver.try_recv() {
-                            process_block(
+                            if let Err(error) = process_block(
                                 session_id,
                                 block,
-                                &mut resampler,
-                                &mut ring_buffer,
+                                &mut pipeline,
                                 &events,
                                 &asr_audio,
-                            );
+                            ) {
+                                processing_error = Some(error);
+                                break;
+                            }
                         }
-                        if let Some(resampler) = resampler.as_mut()
-                            && let Ok(samples) = resampler.finish()
-                            && !samples.is_empty()
-                        {
-                            ring_buffer.push(&samples);
-                        }
-                        let tail = ring_buffer.drain_all();
-                        if !tail.is_empty() {
-                            let _ = asr_audio.send(AudioChunk {
-                                session_id,
-                                samples: tail,
+                        if let Some(message) = processing_error {
+                            active_session = None;
+                            pipeline = None;
+                            let _ = events.send(AudioEvent::Error {
+                                session_id: Some(session_id),
+                                message,
                             });
+                            continue;
+                        }
+                        if let Some(active_pipeline) = pipeline.as_mut() {
+                            let samples = match active_pipeline.resampler.finish() {
+                                Ok(samples) => samples,
+                                Err(error) => {
+                                    active_session = None;
+                                    pipeline = None;
+                                    let _ = events.send(AudioEvent::Error {
+                                        session_id: Some(session_id),
+                                        message: error.to_string(),
+                                    });
+                                    continue;
+                                }
+                            };
+                            if !samples.is_empty() {
+                                let silence_state = active_pipeline
+                                    .silence_detector
+                                    .as_mut()
+                                    .map(|detector| {
+                                        detector.observe(root_mean_square(&samples), samples.len())
+                                    });
+                                match silence_state {
+                                    None
+                                    | Some(SilenceState::Speaking)
+                                    | Some(SilenceState::SegmentEnded) => {
+                                        active_pipeline.ring_buffer.push(&samples);
+                                    }
+                                    Some(SilenceState::SpeechStarted) => {
+                                        active_pipeline.pre_roll.push(&samples);
+                                        let buffered = active_pipeline.pre_roll.drain_all();
+                                        active_pipeline.ring_buffer.push(&buffered);
+                                    }
+                                    Some(SilenceState::Waiting) => {
+                                        active_pipeline.pre_roll.push(&samples);
+                                    }
+                                }
+                            }
+                            if active_pipeline
+                                .silence_detector
+                                .as_ref()
+                                .is_some_and(SilenceDetector::should_flush_tail)
+                                && active_pipeline.ring_buffer.len() == 0
+                            {
+                                let tail = active_pipeline.pre_roll.drain_all();
+                                active_pipeline.ring_buffer.push(&tail);
+                            }
+                            if let Err(message) = flush_all(
+                                session_id,
+                                &mut active_pipeline.ring_buffer,
+                                &asr_audio,
+                            ) {
+                                active_session = None;
+                                pipeline = None;
+                                let _ = events.send(AudioEvent::Error {
+                                    session_id: Some(session_id),
+                                    message,
+                                });
+                                continue;
+                            }
                         }
                         active_session = None;
-                        resampler = None;
+                        pipeline = None;
                         let _ = events.send(AudioEvent::Stopped { session_id });
                     }
                     AudioCommand::SelectDevice { name } => {
@@ -175,18 +261,24 @@ fn run(
                     break;
                 };
                 if let Some(session_id) = active_session {
-                    process_block(
+                    if let Err(message) = process_block(
                         session_id,
                         block,
-                        &mut resampler,
-                        &mut ring_buffer,
+                        &mut pipeline,
                         &events,
                         &asr_audio,
-                    );
-                    if capture.dropped_blocks() > dropped_blocks_at_start {
+                    ) {
                         let _ = capture.pause();
                         active_session = None;
-                        resampler = None;
+                        pipeline = None;
+                        let _ = events.send(AudioEvent::Error {
+                            session_id: Some(session_id),
+                            message,
+                        });
+                    } else if capture.dropped_blocks() > dropped_blocks_at_start {
+                        let _ = capture.pause();
+                        active_session = None;
+                        pipeline = None;
                         let _ = events.send(AudioEvent::Error {
                             session_id: Some(session_id),
                             message: "音频回调过载，当前会话已终止".into(),
@@ -216,7 +308,7 @@ fn wait_for_capture(
         }
         match commands.recv_timeout(std::time::Duration::from_secs(3)) {
             Ok(AudioCommand::SelectDevice { name }) => selected_name = Some(name),
-            Ok(AudioCommand::Start { session_id }) => {
+            Ok(AudioCommand::Start { session_id, .. }) => {
                 let _ = events.send(AudioEvent::Error {
                     session_id: Some(session_id),
                     message: "当前没有可用麦克风".into(),
@@ -234,36 +326,100 @@ fn wait_for_capture(
 fn process_block(
     session_id: u64,
     block: CapturedAudio,
-    resampler: &mut Option<AudioResampler>,
-    ring_buffer: &mut AudioRingBuffer,
+    pipeline: &mut Option<AudioPipeline>,
     events: &Sender<AudioEvent>,
     asr_audio: &Sender<AudioChunk>,
-) {
+) -> Result<(), String> {
     let _ = events.try_send(AudioEvent::Level {
         session_id,
         peak: block.peak,
     });
-    let Some(resampler) = resampler.as_mut() else {
-        return;
+    let Some(pipeline) = pipeline.as_mut() else {
+        return Ok(());
     };
-    debug_assert_eq!(block.sample_rate, resampler.rates().0);
-    match resampler.process(&block.samples) {
+    debug_assert_eq!(block.sample_rate, pipeline.resampler.rates().0);
+    match pipeline.resampler.process(&block.samples) {
         Ok(samples) if !samples.is_empty() => {
-            ring_buffer.push(&samples);
-            while ring_buffer.len() >= 12_800 {
-                let samples = ring_buffer.drain(12_800);
-                let _ = asr_audio.send(AudioChunk {
-                    session_id,
-                    samples,
-                });
+            let rms = root_mean_square(&samples);
+            let silence_state = pipeline
+                .silence_detector
+                .as_mut()
+                .map(|detector| detector.observe(rms, samples.len()));
+            match silence_state {
+                None => pipeline.ring_buffer.push(&samples),
+                Some(SilenceState::Waiting) => pipeline.pre_roll.push(&samples),
+                Some(SilenceState::SpeechStarted) => {
+                    pipeline.pre_roll.push(&samples);
+                    let buffered = pipeline.pre_roll.drain_all();
+                    pipeline.ring_buffer.push(&buffered);
+                }
+                Some(SilenceState::Speaking) | Some(SilenceState::SegmentEnded) => {
+                    pipeline.ring_buffer.push(&samples);
+                }
+            }
+            flush_ready(session_id, &mut pipeline.ring_buffer, asr_audio)?;
+            if silence_state == Some(SilenceState::SegmentEnded) {
+                flush_all(session_id, &mut pipeline.ring_buffer, asr_audio)?;
+                tracing::debug!(session_id, "silence segment boundary detected");
+                send_asr(asr_audio, AudioChunk::SegmentBoundary { session_id })?;
             }
         }
         Ok(_) => {}
         Err(error) => {
-            let _ = events.send(AudioEvent::Error {
-                session_id: Some(session_id),
-                message: error.to_string(),
-            });
+            return Err(error.to_string());
         }
     }
+    Ok(())
+}
+
+fn flush_ready(
+    session_id: u64,
+    ring_buffer: &mut AudioRingBuffer,
+    asr_audio: &Sender<AudioChunk>,
+) -> Result<(), String> {
+    while ring_buffer.len() >= 12_800 {
+        let samples = ring_buffer.drain(12_800);
+        send_asr(
+            asr_audio,
+            AudioChunk::Samples {
+                session_id,
+                samples,
+            },
+        )?;
+    }
+    Ok(())
+}
+
+fn flush_all(
+    session_id: u64,
+    ring_buffer: &mut AudioRingBuffer,
+    asr_audio: &Sender<AudioChunk>,
+) -> Result<(), String> {
+    let samples = ring_buffer.drain_all();
+    if !samples.is_empty() {
+        send_asr(
+            asr_audio,
+            AudioChunk::Samples {
+                session_id,
+                samples,
+            },
+        )?;
+    }
+    Ok(())
+}
+
+fn send_asr(asr_audio: &Sender<AudioChunk>, chunk: AudioChunk) -> Result<(), String> {
+    asr_audio.try_send(chunk).map_err(|error| match error {
+        TrySendError::Full(_) => "ASR 处理速度不足，当前录音已终止".into(),
+        TrySendError::Disconnected(_) => "ASR 音频通道已断开".into(),
+    })
+}
+
+fn root_mean_square(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    let mean_square =
+        samples.iter().map(|sample| sample * sample).sum::<f32>() / samples.len() as f32;
+    mean_square.sqrt()
 }
